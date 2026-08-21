@@ -1029,6 +1029,438 @@ internal func _lapackGels<T: LAPACKScalar>(
     return 0
 }
 
+// MARK: - General eigendecomposition
+
+@inline(__always)
+private func _lapackComplexSquareRoot<RealType: Real>(
+    _ value: Complex<RealType>
+) -> Complex<RealType> {
+    if value.imaginary == .zero {
+        if value.real >= .zero {
+            return Complex(RealType.sqrt(value.real), .zero)
+        }
+        return Complex(.zero, RealType.sqrt(-value.real))
+    }
+    let magnitude = value.length
+    let real = RealType.sqrt(Swift.max(.zero, (magnitude + value.real) / 2))
+    let imaginaryMagnitude = RealType.sqrt(
+        Swift.max(.zero, (magnitude - value.real) / 2)
+    )
+    return Complex(
+        real,
+        value.imaginary < .zero ? -imaginaryMagnitude : imaginaryMagnitude
+    )
+}
+
+private func _lapackComplexQR<RealType: Real>(
+    _ matrix: [Complex<RealType>],
+    n: Int,
+    tolerance: RealType
+) -> (q: [Complex<RealType>], r: [Complex<RealType>]) {
+    var q = [Complex<RealType>](repeating: .zero, count: n * n)
+    var r = [Complex<RealType>](repeating: .zero, count: n * n)
+
+    for column in 0..<n {
+        var vector = [Complex<RealType>](repeating: .zero, count: n)
+        for row in 0..<n { vector[row] = matrix[column * n + row] }
+
+        // Two modified Gram-Schmidt passes keep the small portable solver
+        // acceptably stable without introducing another factorization kernel.
+        for _ in 0..<2 {
+            for previous in 0..<column {
+                var projection = Complex<RealType>.zero
+                for row in 0..<n {
+                    projection += q[previous * n + row].conjugate * vector[row]
+                }
+                r[column * n + previous] += projection
+                for row in 0..<n {
+                    vector[row] -= q[previous * n + row] * projection
+                }
+            }
+        }
+
+        var normSquared = RealType.zero
+        for value in vector { normSquared += value.normSquared }
+        let residualNorm = RealType.sqrt(normSquared)
+        r[column * n + column] = Complex(residualNorm, .zero)
+
+        if residualNorm > tolerance {
+            let inverseNorm = 1 / residualNorm
+            for row in 0..<n {
+                q[column * n + row] = vector[row].scaled(by: inverseNorm)
+            }
+            continue
+        }
+
+        // A shifted matrix can be singular. Complete Q with an arbitrary
+        // orthonormal direction while retaining a zero diagonal in R.
+        var foundDirection = false
+        for candidate in 0..<n where !foundDirection {
+            for row in 0..<n {
+                vector[row] = row == candidate ? .one : .zero
+            }
+            for previous in 0..<column {
+                var projection = Complex<RealType>.zero
+                for row in 0..<n {
+                    projection += q[previous * n + row].conjugate * vector[row]
+                }
+                for row in 0..<n {
+                    vector[row] -= q[previous * n + row] * projection
+                }
+            }
+            normSquared = .zero
+            for value in vector { normSquared += value.normSquared }
+            let norm = RealType.sqrt(normSquared)
+            if norm > tolerance {
+                let inverseNorm = 1 / norm
+                for row in 0..<n {
+                    q[column * n + row] = vector[row].scaled(by: inverseNorm)
+                }
+                foundDirection = true
+            }
+        }
+    }
+    return (q, r)
+}
+
+@inline(__always)
+private func _lapackWilkinsonShift<RealType: Real>(
+    _ matrix: [Complex<RealType>],
+    stride: Int,
+    activeCount: Int
+) -> Complex<RealType> {
+    let first = activeCount - 2
+    let second = activeCount - 1
+    let a = matrix[first * stride + first]
+    let b = matrix[second * stride + first]
+    let c = matrix[first * stride + second]
+    let d = matrix[second * stride + second]
+    let discriminant = _lapackComplexSquareRoot((a - d) * (a - d) + 4 * b * c)
+    let firstEigenvalue = (a + d + discriminant) / 2
+    let secondEigenvalue = (a + d - discriminant) / 2
+    let firstDistance = (firstEigenvalue - d).normSquared
+    let secondDistance = (secondEigenvalue - d).normSquared
+    return firstDistance <= secondDistance ? firstEigenvalue : secondEigenvalue
+}
+
+private func _lapackGeneralEigenvalues<RealType: Real>(
+    of matrix: [Complex<RealType>],
+    n: Int
+) -> (values: [Complex<RealType>], converged: Bool) {
+    guard n > 1 else {
+        return (n == 1 ? [matrix[0]] : [], true)
+    }
+
+    var iterate = matrix
+    var activeCount = n
+    var iterations = 0
+    let maximumIterations = Swift.max(512, 2048 * n)
+    let relativeTolerance = RealType.ulpOfOne * RealType(Swift.max(1, 64 * n))
+
+    while activeCount > 1 && iterations < maximumIterations {
+        let last = activeCount - 1
+        var lowerNormSquared = RealType.zero
+        for column in 0..<last {
+            lowerNormSquared += iterate[column * n + last].normSquared
+        }
+        let lowerNorm = RealType.sqrt(lowerNormSquared)
+        var scale: RealType = 1
+        for index in 0..<activeCount {
+            scale = Swift.max(scale, iterate[index * n + index].length)
+        }
+        if lowerNorm <= relativeTolerance * scale {
+            for column in 0..<last { iterate[column * n + last] = .zero }
+            activeCount -= 1
+            continue
+        }
+
+        let shift = _lapackWilkinsonShift(
+            iterate, stride: n, activeCount: activeCount
+        )
+        var shifted = [Complex<RealType>](
+            repeating: .zero, count: activeCount * activeCount
+        )
+        var shiftedScale: RealType = 1
+        for column in 0..<activeCount {
+            for row in 0..<activeCount {
+                var value = iterate[column * n + row]
+                if row == column { value -= shift }
+                shifted[column * activeCount + row] = value
+                shiftedScale = Swift.max(shiftedScale, value.length)
+            }
+        }
+        let qr = _lapackComplexQR(
+            shifted,
+            n: activeCount,
+            tolerance: RealType.ulpOfOne
+                * RealType(Swift.max(1, 16 * activeCount)) * shiftedScale
+        )
+        for column in 0..<activeCount {
+            for row in 0..<activeCount {
+                var value = Complex<RealType>.zero
+                for inner in 0..<activeCount {
+                    value +=
+                        qr.r[inner * activeCount + row]
+                        * qr.q[column * activeCount + inner]
+                }
+                if row == column { value += shift }
+                iterate[column * n + row] = value
+            }
+        }
+        iterations += 1
+    }
+
+    var values = [Complex<RealType>](repeating: .zero, count: n)
+    for index in 0..<n { values[index] = iterate[index * n + index] }
+    return (values, activeCount <= 1)
+}
+
+private func _lapackNormalizedNullVector<RealType: Real>(
+    matrix: [Complex<RealType>],
+    n: Int,
+    eigenvalue: Complex<RealType>,
+    left: Bool
+) -> [Complex<RealType>] {
+    guard n > 0 else { return [] }
+    var shifted = matrix
+    for index in 0..<n { shifted[index * n + index] -= eigenvalue }
+
+    var gram = [Complex<RealType>](repeating: .zero, count: n * n)
+    for column in 0..<n {
+        for row in 0...column {
+            var value = Complex<RealType>.zero
+            for inner in 0..<n {
+                if left {
+                    value +=
+                        shifted[inner * n + row]
+                        * shifted[inner * n + column].conjugate
+                } else {
+                    value +=
+                        shifted[row * n + inner].conjugate
+                        * shifted[column * n + inner]
+                }
+            }
+            gram[column * n + row] = value
+            gram[row * n + column] = value.conjugate
+        }
+    }
+
+    let decomposition = _lapackHermitianJacobi(matrix: &gram, n: n)
+    var selected = 0
+    for index in 1..<n where decomposition.values[index] < decomposition.values[selected] {
+        selected = index
+    }
+    var vector = [Complex<RealType>](repeating: .zero, count: n)
+    for row in 0..<n { vector[row] = decomposition.vectors[selected * n + row] }
+
+    var normSquared = RealType.zero
+    var largestIndex = 0
+    for index in 0..<n {
+        normSquared += vector[index].normSquared
+        if vector[index].normSquared > vector[largestIndex].normSquared {
+            largestIndex = index
+        }
+    }
+    let norm = RealType.sqrt(normSquared)
+    guard norm > .zero else {
+        vector[0] = .one
+        return vector
+    }
+    let inverseNorm = 1 / norm
+    for index in 0..<n { vector[index] = vector[index].scaled(by: inverseNorm) }
+
+    let pivotMagnitude = vector[largestIndex].length
+    if pivotMagnitude > .zero {
+        let phase = vector[largestIndex].scaled(by: 1 / pivotMagnitude).conjugate
+        for index in 0..<n { vector[index] *= phase }
+    }
+    return vector
+}
+
+private func _lapackOrderedRealEigenvalues<RealType: Real>(
+    _ values: [Complex<RealType>]
+) -> [Complex<RealType>] {
+    guard !values.isEmpty else { return [] }
+    var scale: RealType = 1
+    for value in values { scale = Swift.max(scale, value.length) }
+    let tolerance = RealType.sqrt(RealType.ulpOfOne) * scale * 8
+    var used = [Bool](repeating: false, count: values.count)
+    var ordered: [Complex<RealType>] = []
+    ordered.reserveCapacity(values.count)
+
+    for index in values.indices where !used[index] {
+        let value = values[index]
+        if value.imaginary.magnitude <= tolerance {
+            used[index] = true
+            ordered.append(Complex(value.real, .zero))
+            continue
+        }
+
+        let target = value.conjugate
+        var match: Int?
+        var bestDistance = RealType.infinity
+        for candidate in values.indices where candidate != index && !used[candidate] {
+            let distance = (values[candidate] - target).normSquared
+            if distance < bestDistance {
+                bestDistance = distance
+                match = candidate
+            }
+        }
+        guard let match else {
+            used[index] = true
+            ordered.append(value)
+            continue
+        }
+        used[index] = true
+        used[match] = true
+        let real = (value.real + values[match].real) / 2
+        let imaginary =
+            (value.imaginary.magnitude + values[match].imaginary.magnitude) / 2
+        ordered.append(Complex(real, imaginary))
+        ordered.append(Complex(real, -imaginary))
+    }
+    return ordered
+}
+
+@inline(__always)
+private func _lapackEigenvectorLeadingDimensionError(
+    job: LAPACK.Eigenvectors,
+    n: Int,
+    leadingDimension: Int
+) -> Bool {
+    leadingDimension < (job == .vectors ? Swift.max(1, n) : 1)
+}
+
+internal func _lapackRealGeev<RealType: Real & LAPACKScalar>(
+    layout: LAPACK.Layout,
+    jobVL: LAPACK.Eigenvectors,
+    jobVR: LAPACK.Eigenvectors,
+    n: Int,
+    a: UnsafeMutablePointer<RealType>,
+    lda: Int,
+    wr: UnsafeMutablePointer<RealType>,
+    wi: UnsafeMutablePointer<RealType>,
+    vl: UnsafeMutablePointer<RealType>,
+    ldvl: Int,
+    vr: UnsafeMutablePointer<RealType>,
+    ldvr: Int
+) -> Int where RealType.Magnitude == RealType {
+    guard n >= 0 else { return -4 }
+    guard
+        lda
+            >= _lapackMinimumLeadingDimension(
+                layout: layout, rows: n, columns: n
+            )
+    else { return -6 }
+    guard !_lapackEigenvectorLeadingDimensionError(job: jobVL, n: n, leadingDimension: ldvl)
+    else { return -10 }
+    guard !_lapackEigenvectorLeadingDimensionError(job: jobVR, n: n, leadingDimension: ldvr)
+    else { return -12 }
+
+    var matrix = [Complex<RealType>](repeating: .zero, count: n * n)
+    for column in 0..<n {
+        for row in 0..<n {
+            matrix[column * n + row] = Complex(
+                a[_matrixIndex(layout, row, column, lda)], .zero
+            )
+        }
+    }
+    let result = _lapackGeneralEigenvalues(of: matrix, n: n)
+    let values = _lapackOrderedRealEigenvalues(result.values)
+    for index in 0..<n {
+        wr[index] = values[index].real
+        wi[index] = values[index].imaginary
+    }
+    guard result.converged else { return 1 }
+
+    func storeEigenvectors(
+        in output: UnsafeMutablePointer<RealType>,
+        leadingDimension: Int,
+        left: Bool
+    ) {
+        var column = 0
+        while column < n {
+            let value = values[column]
+            let vector = _lapackNormalizedNullVector(
+                matrix: matrix, n: n, eigenvalue: value, left: left
+            )
+            if value.imaginary > .zero && column + 1 < n {
+                for row in 0..<n {
+                    output[_matrixIndex(layout, row, column, leadingDimension)] =
+                        vector[row].real
+                    output[_matrixIndex(layout, row, column + 1, leadingDimension)] =
+                        vector[row].imaginary
+                }
+                column += 2
+            } else {
+                for row in 0..<n {
+                    output[_matrixIndex(layout, row, column, leadingDimension)] =
+                        vector[row].real
+                }
+                column += 1
+            }
+        }
+    }
+    if jobVL == .vectors { storeEigenvectors(in: vl, leadingDimension: ldvl, left: true) }
+    if jobVR == .vectors { storeEigenvectors(in: vr, leadingDimension: ldvr, left: false) }
+    return 0
+}
+
+internal func _lapackComplexGeev<RealType: Real>(
+    layout: LAPACK.Layout,
+    jobVL: LAPACK.Eigenvectors,
+    jobVR: LAPACK.Eigenvectors,
+    n: Int,
+    a: UnsafeMutablePointer<Complex<RealType>>,
+    lda: Int,
+    w: UnsafeMutablePointer<Complex<RealType>>,
+    vl: UnsafeMutablePointer<Complex<RealType>>,
+    ldvl: Int,
+    vr: UnsafeMutablePointer<Complex<RealType>>,
+    ldvr: Int
+) -> Int {
+    guard n >= 0 else { return -4 }
+    guard
+        lda
+            >= _lapackMinimumLeadingDimension(
+                layout: layout, rows: n, columns: n
+            )
+    else { return -6 }
+    guard !_lapackEigenvectorLeadingDimensionError(job: jobVL, n: n, leadingDimension: ldvl)
+    else { return -9 }
+    guard !_lapackEigenvectorLeadingDimensionError(job: jobVR, n: n, leadingDimension: ldvr)
+    else { return -11 }
+
+    var matrix = [Complex<RealType>](repeating: .zero, count: n * n)
+    for column in 0..<n {
+        for row in 0..<n {
+            matrix[column * n + row] = a[_matrixIndex(layout, row, column, lda)]
+        }
+    }
+    let result = _lapackGeneralEigenvalues(of: matrix, n: n)
+    for index in 0..<n { w[index] = result.values[index] }
+    guard result.converged else { return 1 }
+    for index in 0..<n {
+        if jobVL == .vectors {
+            let vector = _lapackNormalizedNullVector(
+                matrix: matrix, n: n, eigenvalue: result.values[index], left: true
+            )
+            for row in 0..<n {
+                vl[_matrixIndex(layout, row, index, ldvl)] = vector[row]
+            }
+        }
+        if jobVR == .vectors {
+            let vector = _lapackNormalizedNullVector(
+                matrix: matrix, n: n, eigenvalue: result.values[index], left: false
+            )
+            for row in 0..<n {
+                vr[_matrixIndex(layout, row, index, ldvr)] = vector[row]
+            }
+        }
+    }
+    return 0
+}
+
 // MARK: - Hermitian eigendecomposition
 
 @inlinable

@@ -432,6 +432,234 @@ internal func _accelerateZheev(
     }
 }
 
+// MARK: General eigendecomposition
+
+private func _accelerateRealGeev<Scalar: _LAPACKWorkspaceScalar>(
+    layout: LAPACK.Layout,
+    jobVL: LAPACK.Eigenvectors,
+    jobVR: LAPACK.Eigenvectors,
+    n: Int,
+    a: UnsafeMutablePointer<Scalar>,
+    lda: Int,
+    wr: UnsafeMutablePointer<Scalar>,
+    wi: UnsafeMutablePointer<Scalar>,
+    vl: UnsafeMutablePointer<Scalar>,
+    ldvl: Int,
+    vr: UnsafeMutablePointer<Scalar>,
+    ldvr: Int,
+    _ call: (
+        UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>
+    ) -> Void
+) -> Int {
+    if n < 0 { return -4 }
+    if lda
+        < _lapackMinimumLeadingDimension(
+            layout: layout, rows: n, columns: n
+        )
+    {
+        return -6
+    }
+    if ldvl < (jobVL == .vectors ? Swift.max(1, n) : 1) { return -10 }
+    if ldvr < (jobVR == .vectors ? Swift.max(1, n) : 1) { return -12 }
+
+    let vlColumns = jobVL == .vectors ? n : 0
+    let vrColumns = jobVR == .vectors ? n : 0
+    return _withLAPACKColumnMajorMutableMatrix(
+        layout: layout, rows: n, columns: n, matrix: a,
+        leadingDimension: lda
+    ) { a, lda in
+        _withLAPACKColumnMajorOutputMatrix(
+            layout: layout, rows: n, columns: vlColumns,
+            matrix: vl, leadingDimension: ldvl, initialValue: Scalar.zero
+        ) { vl, ldvl in
+            _withLAPACKColumnMajorOutputMatrix(
+                layout: layout, rows: n, columns: vrColumns,
+                matrix: vr, leadingDimension: ldvr, initialValue: Scalar.zero
+            ) { vr, ldvr in
+                var jobVL = jobVL._character
+                var jobVR = jobVR._character
+                var n = n
+                var lda = lda
+                var ldvl = ldvl
+                var ldvr = ldvr
+                var lwork = -1
+                var info = 0
+                var query = Scalar.zero
+                withUnsafeMutablePointer(to: &query) { query in
+                    call(
+                        &jobVL, &jobVR, &n, a, &lda, wr, wi,
+                        vl, &ldvl, vr, &ldvr, query, &lwork, &info)
+                }
+                if info != 0 { return _lapackeInfo(info) }
+                lwork = _accelerateWorkspaceCount(query)
+                var work = [Scalar](repeating: .zero, count: lwork)
+                work.withUnsafeMutableBufferPointer { work in
+                    call(
+                        &jobVL, &jobVR, &n, a, &lda, wr, wi,
+                        vl, &ldvl, vr, &ldvr, work.baseAddress!, &lwork, &info)
+                }
+                return _lapackeInfo(info)
+            }
+        }
+    }
+}
+
+internal func _accelerateSgeev(
+    layout: LAPACK.Layout, jobVL: LAPACK.Eigenvectors, jobVR: LAPACK.Eigenvectors, n: Int,
+    a: UnsafeMutablePointer<Float>, lda: Int,
+    wr: UnsafeMutablePointer<Float>, wi: UnsafeMutablePointer<Float>,
+    vl: UnsafeMutablePointer<Float>, ldvl: Int,
+    vr: UnsafeMutablePointer<Float>, ldvr: Int
+) -> Int {
+    _accelerateRealGeev(
+        layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+        a: a, lda: lda, wr: wr, wi: wi, vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr
+    ) {
+        sgeev_($0, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    }
+}
+
+internal func _accelerateDgeev(
+    layout: LAPACK.Layout, jobVL: LAPACK.Eigenvectors, jobVR: LAPACK.Eigenvectors, n: Int,
+    a: UnsafeMutablePointer<Double>, lda: Int,
+    wr: UnsafeMutablePointer<Double>, wi: UnsafeMutablePointer<Double>,
+    vl: UnsafeMutablePointer<Double>, ldvl: Int,
+    vr: UnsafeMutablePointer<Double>, ldvr: Int
+) -> Int {
+    _accelerateRealGeev(
+        layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+        a: a, lda: lda, wr: wr, wi: wi, vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr
+    ) {
+        dgeev_($0, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    }
+}
+
+private func _accelerateComplexGeev<Scalar: _LAPACKWorkspaceScalar>(
+    layout: LAPACK.Layout,
+    jobVL: LAPACK.Eigenvectors,
+    jobVR: LAPACK.Eigenvectors,
+    n: Int,
+    a: UnsafeMutablePointer<Scalar>,
+    lda: Int,
+    w: UnsafeMutablePointer<Scalar>,
+    vl: UnsafeMutablePointer<Scalar>,
+    ldvl: Int,
+    vr: UnsafeMutablePointer<Scalar>,
+    ldvr: Int,
+    _ call: (
+        UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Int>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Int>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Int>,
+        UnsafeMutablePointer<Scalar.Magnitude>, UnsafeMutablePointer<Int>
+    ) -> Void
+) -> Int {
+    if n < 0 { return -4 }
+    if lda
+        < _lapackMinimumLeadingDimension(
+            layout: layout, rows: n, columns: n
+        )
+    {
+        return -6
+    }
+    if ldvl < (jobVL == .vectors ? Swift.max(1, n) : 1) { return -9 }
+    if ldvr < (jobVR == .vectors ? Swift.max(1, n) : 1) { return -11 }
+
+    let vlColumns = jobVL == .vectors ? n : 0
+    let vrColumns = jobVR == .vectors ? n : 0
+    return _withLAPACKColumnMajorMutableMatrix(
+        layout: layout, rows: n, columns: n, matrix: a,
+        leadingDimension: lda
+    ) { a, lda in
+        _withLAPACKColumnMajorOutputMatrix(
+            layout: layout, rows: n, columns: vlColumns,
+            matrix: vl, leadingDimension: ldvl, initialValue: Scalar.zero
+        ) { vl, ldvl in
+            _withLAPACKColumnMajorOutputMatrix(
+                layout: layout, rows: n, columns: vrColumns,
+                matrix: vr, leadingDimension: ldvr, initialValue: Scalar.zero
+            ) { vr, ldvr in
+                var jobVL = jobVL._character
+                var jobVR = jobVR._character
+                var n = n
+                var lda = lda
+                var ldvl = ldvl
+                var ldvr = ldvr
+                var lwork = -1
+                var info = 0
+                var query = Scalar.zero
+                var rwork = [Scalar.Magnitude](
+                    repeating: .zero, count: Swift.max(1, 2 * n)
+                )
+                rwork.withUnsafeMutableBufferPointer { rwork in
+                    withUnsafeMutablePointer(to: &query) { query in
+                        call(
+                            &jobVL, &jobVR, &n, a, &lda, w,
+                            vl, &ldvl, vr, &ldvr, query, &lwork,
+                            rwork.baseAddress!, &info)
+                    }
+                }
+                if info != 0 { return _lapackeInfo(info) }
+                lwork = _accelerateWorkspaceCount(query)
+                var work = [Scalar](repeating: .zero, count: lwork)
+                work.withUnsafeMutableBufferPointer { work in
+                    rwork.withUnsafeMutableBufferPointer { rwork in
+                        call(
+                            &jobVL, &jobVR, &n, a, &lda, w,
+                            vl, &ldvl, vr, &ldvr, work.baseAddress!, &lwork,
+                            rwork.baseAddress!, &info)
+                    }
+                }
+                return _lapackeInfo(info)
+            }
+        }
+    }
+}
+
+internal func _accelerateCgeev(
+    layout: LAPACK.Layout, jobVL: LAPACK.Eigenvectors, jobVR: LAPACK.Eigenvectors, n: Int,
+    a: UnsafeMutablePointer<Complex<Float>>, lda: Int,
+    w: UnsafeMutablePointer<Complex<Float>>,
+    vl: UnsafeMutablePointer<Complex<Float>>, ldvl: Int,
+    vr: UnsafeMutablePointer<Complex<Float>>, ldvr: Int
+) -> Int {
+    _accelerateComplexGeev(
+        layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+        a: a, lda: lda, w: w, vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr
+    ) {
+        cgeev_(
+            $0, $1, $2, _complexFloatPointer($3), $4, _complexFloatPointer($5),
+            _complexFloatPointer($6), $7, _complexFloatPointer($8), $9,
+            _complexFloatPointer($10), $11, $12, $13)
+    }
+}
+
+internal func _accelerateZgeev(
+    layout: LAPACK.Layout, jobVL: LAPACK.Eigenvectors, jobVR: LAPACK.Eigenvectors, n: Int,
+    a: UnsafeMutablePointer<Complex<Double>>, lda: Int,
+    w: UnsafeMutablePointer<Complex<Double>>,
+    vl: UnsafeMutablePointer<Complex<Double>>, ldvl: Int,
+    vr: UnsafeMutablePointer<Complex<Double>>, ldvr: Int
+) -> Int {
+    _accelerateComplexGeev(
+        layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+        a: a, lda: lda, w: w, vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr
+    ) {
+        zgeev_(
+            $0, $1, $2, _complexDoublePointer($3), $4, _complexDoublePointer($5),
+            _complexDoublePointer($6), $7, _complexDoublePointer($8), $9,
+            _complexDoublePointer($10), $11, $12, $13)
+    }
+}
+
 // MARK: Singular value decomposition
 
 @inline(__always)

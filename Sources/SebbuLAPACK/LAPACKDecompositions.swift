@@ -349,6 +349,136 @@ extension LAPACK {
     }
 }
 
+// MARK: - General eigendecomposition
+
+extension LAPACK {
+    /// Computes the eigenvalues and, optionally, the left and/or right
+    /// eigenvectors of a real single-precision general matrix.
+    ///
+    /// For a complex conjugate pair `wr[j] +/- i * wi[j]`, where `wi[j] > 0`,
+    /// the corresponding eigenvectors are stored in consecutive real columns:
+    /// column `j` contains the real part and column `j + 1` the imaginary part.
+    @discardableResult
+    public static func sgeev(
+        layout: Layout, jobVL: Eigenvectors, jobVR: Eigenvectors, n: Int,
+        a: UnsafeMutablePointer<Float>, lda: Int,
+        wr: UnsafeMutablePointer<Float>, wi: UnsafeMutablePointer<Float>,
+        vl: UnsafeMutablePointer<Float>, ldvl: Int,
+        vr: UnsafeMutablePointer<Float>, ldvr: Int
+    ) -> Int {
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        return Int(
+            LAPACKE_sgeev(
+                _backendIndex(layout.rawValue), jobVL._character, jobVR._character,
+                _backendIndex(n), a, _backendIndex(lda), wr, wi,
+                vl, _backendIndex(ldvl), vr, _backendIndex(ldvr)))
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateSgeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, wr: wr, wi: wi,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #else
+        return _lapackRealGeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, wr: wr, wi: wi,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #endif
+    }
+
+    /// Computes the eigenvalues and, optionally, the left and/or right
+    /// eigenvectors of a real double-precision general matrix.
+    ///
+    /// For a complex conjugate pair `wr[j] +/- i * wi[j]`, where `wi[j] > 0`,
+    /// the corresponding eigenvectors are stored in consecutive real columns:
+    /// column `j` contains the real part and column `j + 1` the imaginary part.
+    @discardableResult
+    public static func dgeev(
+        layout: Layout, jobVL: Eigenvectors, jobVR: Eigenvectors, n: Int,
+        a: UnsafeMutablePointer<Double>, lda: Int,
+        wr: UnsafeMutablePointer<Double>, wi: UnsafeMutablePointer<Double>,
+        vl: UnsafeMutablePointer<Double>, ldvl: Int,
+        vr: UnsafeMutablePointer<Double>, ldvr: Int
+    ) -> Int {
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        return Int(
+            LAPACKE_dgeev(
+                _backendIndex(layout.rawValue), jobVL._character, jobVR._character,
+                _backendIndex(n), a, _backendIndex(lda), wr, wi,
+                vl, _backendIndex(ldvl), vr, _backendIndex(ldvr)))
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateDgeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, wr: wr, wi: wi,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #else
+        return _lapackRealGeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, wr: wr, wi: wi,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #endif
+    }
+
+    /// Computes the eigenvalues and, optionally, the left and/or right
+    /// eigenvectors of a complex single-precision general matrix.
+    @discardableResult
+    public static func cgeev(
+        layout: Layout, jobVL: Eigenvectors, jobVR: Eigenvectors, n: Int,
+        a: UnsafeMutablePointer<Complex<Float>>, lda: Int,
+        w: UnsafeMutablePointer<Complex<Float>>,
+        vl: UnsafeMutablePointer<Complex<Float>>, ldvl: Int,
+        vr: UnsafeMutablePointer<Complex<Float>>, ldvr: Int
+    ) -> Int {
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        return Int(
+            LAPACKE_cgeev(
+                _backendIndex(layout.rawValue), jobVL._character, jobVR._character,
+                _backendIndex(n), _complexFloatPointer(a), _backendIndex(lda),
+                _complexFloatPointer(w), _complexFloatPointer(vl), _backendIndex(ldvl),
+                _complexFloatPointer(vr), _backendIndex(ldvr)))
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateCgeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, w: w,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #else
+        return _lapackComplexGeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, w: w,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #endif
+    }
+
+    /// Computes the eigenvalues and, optionally, the left and/or right
+    /// eigenvectors of a complex double-precision general matrix.
+    @discardableResult
+    public static func zgeev(
+        layout: Layout, jobVL: Eigenvectors, jobVR: Eigenvectors, n: Int,
+        a: UnsafeMutablePointer<Complex<Double>>, lda: Int,
+        w: UnsafeMutablePointer<Complex<Double>>,
+        vl: UnsafeMutablePointer<Complex<Double>>, ldvl: Int,
+        vr: UnsafeMutablePointer<Complex<Double>>, ldvr: Int
+    ) -> Int {
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        return Int(
+            LAPACKE_zgeev(
+                _backendIndex(layout.rawValue), jobVL._character, jobVR._character,
+                _backendIndex(n), _complexDoublePointer(a), _backendIndex(lda),
+                _complexDoublePointer(w), _complexDoublePointer(vl), _backendIndex(ldvl),
+                _complexDoublePointer(vr), _backendIndex(ldvr)))
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateZgeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, w: w,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #else
+        return _lapackComplexGeev(
+            layout: layout, jobVL: jobVL, jobVR: jobVR, n: n,
+            a: a, lda: lda, w: w,
+            vl: vl, ldvl: ldvl, vr: vr, ldvr: ldvr)
+        #endif
+    }
+}
+
 // MARK: - Singular value decomposition
 
 extension LAPACK {
