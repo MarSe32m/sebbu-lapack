@@ -40,7 +40,7 @@ complex-double-precision families:
 | Triangular systems | `*trtrs`, `*trtri` |
 | QR factorization | `*geqrf`, `*orgqr`, `*ungqr` |
 | Least squares | `*gels` |
-| General eigenproblems | `*geev` |
+| General eigenproblems and Schur decompositions | `*geev`, `*gees` |
 | Symmetric/Hermitian eigenproblems | `ssyev`, `dsyev`, `cheev`, `zheev` |
 | Singular value decomposition | `*gesvd`, `*gesdd` |
 | Matrix norms | `*lange`, `slansy`, `dlansy`, `clanhe`, `zlanhe` |
@@ -64,9 +64,9 @@ Swift Numerics.
 - Pass `-Xswiftc -DSEBBU_LAPACK_FORCE_SWIFT` to force the Swift backend for
   testing.
 
-The fallback least-squares, general-eigenproblem, and SVD implementations
-prioritize portability. For large or ill-conditioned problems, prefer the
-OpenBLAS or Accelerate backend.
+The fallback least-squares, general-eigenproblem, Schur-decomposition, and SVD
+implementations prioritize portability. For large or ill-conditioned problems,
+prefer the OpenBLAS or Accelerate backend.
 
 ## Package dependency
 
