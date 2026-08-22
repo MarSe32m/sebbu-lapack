@@ -1215,7 +1215,7 @@ private func _lapackGeneralEigenvalues<RealType: Real>(
     return (values, activeCount <= 1)
 }
 
-private func _lapackNormalizedNullVector<RealType: Real>(
+internal func _lapackNormalizedNullVector<RealType: Real>(
     matrix: [Complex<RealType>],
     n: Int,
     eigenvalue: Complex<RealType>,

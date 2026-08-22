@@ -660,6 +660,267 @@ internal func _accelerateZgeev(
     }
 }
 
+// MARK: General Schur decomposition
+
+private let _accelerateSgeesSelectNone: LAPACK.SgeesSelect = { _, _ in 0 }
+private let _accelerateDgeesSelectNone: LAPACK.DgeesSelect = { _, _ in 0 }
+private let _accelerateCgeesSelectNone: LAPACK.CgeesSelect = { _ in 0 }
+private let _accelerateZgeesSelectNone: LAPACK.ZgeesSelect = { _ in 0 }
+
+@inline(__always)
+private func _accelerateGeesArgumentError(
+    layout: LAPACK.Layout,
+    jobVS: LAPACK.Eigenvectors,
+    n: Int,
+    lda: Int,
+    ldvs: Int,
+    ldvsArgument: Int
+) -> Int? {
+    if n < 0 { return -5 }
+    if lda
+        < _lapackMinimumLeadingDimension(
+            layout: layout, rows: n, columns: n
+        )
+    {
+        return -7
+    }
+    let minimumLDVS: Int
+    if layout == .rowMajor {
+        minimumLDVS = Swift.max(1, n)
+    } else {
+        minimumLDVS = jobVS == .vectors ? Swift.max(1, n) : 1
+    }
+    if ldvs < minimumLDVS { return -ldvsArgument }
+    return nil
+}
+
+private func _accelerateRealGees<Scalar: _LAPACKWorkspaceScalar>(
+    layout: LAPACK.Layout,
+    jobVS: LAPACK.Eigenvectors,
+    sort: LAPACK.SchurSort,
+    n: Int,
+    a: UnsafeMutablePointer<Scalar>,
+    lda: Int,
+    sdim: UnsafeMutablePointer<Int>,
+    wr: UnsafeMutablePointer<Scalar>,
+    wi: UnsafeMutablePointer<Scalar>,
+    vs: UnsafeMutablePointer<Scalar>,
+    ldvs: Int,
+    _ call: (
+        UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Int>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Int>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>
+    ) -> Void
+) -> Int {
+    if let error = _accelerateGeesArgumentError(
+        layout: layout, jobVS: jobVS, n: n, lda: lda, ldvs: ldvs,
+        ldvsArgument: 12
+    ) {
+        return error
+    }
+
+    let vsColumns = jobVS == .vectors ? n : 0
+    return _withLAPACKColumnMajorMutableMatrix(
+        layout: layout, rows: n, columns: n, matrix: a,
+        leadingDimension: lda
+    ) { a, lda in
+        _withLAPACKColumnMajorOutputMatrix(
+            layout: layout, rows: n, columns: vsColumns, matrix: vs,
+            leadingDimension: ldvs, initialValue: Scalar.zero
+        ) { vs, ldvs in
+            var jobVS = jobVS._character
+            var sort = sort._character
+            var n = n
+            var lda = lda
+            var ldvs = ldvs
+            var lwork = -1
+            var info = 0
+            var query = Scalar.zero
+            var bwork = [Int](repeating: 0, count: Swift.max(1, n))
+            bwork.withUnsafeMutableBufferPointer { bwork in
+                withUnsafeMutablePointer(to: &query) { query in
+                    call(
+                        &jobVS, &sort, &n, a, &lda, sdim, wr, wi, vs,
+                        &ldvs, query, &lwork, bwork.baseAddress!, &info)
+                }
+            }
+            if info != 0 { return _lapackeInfo(info) }
+            lwork = _accelerateWorkspaceCount(query)
+            var work = [Scalar](repeating: .zero, count: lwork)
+            work.withUnsafeMutableBufferPointer { work in
+                bwork.withUnsafeMutableBufferPointer { bwork in
+                    call(
+                        &jobVS, &sort, &n, a, &lda, sdim, wr, wi, vs,
+                        &ldvs, work.baseAddress!, &lwork,
+                        bwork.baseAddress!, &info)
+                }
+            }
+            return _lapackeInfo(info)
+        }
+    }
+}
+
+internal func _accelerateSgees(
+    layout: LAPACK.Layout, jobVS: LAPACK.Eigenvectors,
+    sort: LAPACK.SchurSort, select: LAPACK.SgeesSelect?, n: Int,
+    a: UnsafeMutablePointer<Float>, lda: Int,
+    sdim: UnsafeMutablePointer<Int>, wr: UnsafeMutablePointer<Float>,
+    wi: UnsafeMutablePointer<Float>, vs: UnsafeMutablePointer<Float>,
+    ldvs: Int
+) -> Int {
+    if sort == .selected && select == nil { return -4 }
+    let select = select ?? _accelerateSgeesSelectNone
+    return _accelerateRealGees(
+        layout: layout, jobVS: jobVS, sort: sort, n: n, a: a, lda: lda,
+        sdim: sdim, wr: wr, wi: wi, vs: vs, ldvs: ldvs
+    ) {
+        sgees_(
+            $0, $1, select, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13)
+    }
+}
+
+internal func _accelerateDgees(
+    layout: LAPACK.Layout, jobVS: LAPACK.Eigenvectors,
+    sort: LAPACK.SchurSort, select: LAPACK.DgeesSelect?, n: Int,
+    a: UnsafeMutablePointer<Double>, lda: Int,
+    sdim: UnsafeMutablePointer<Int>, wr: UnsafeMutablePointer<Double>,
+    wi: UnsafeMutablePointer<Double>, vs: UnsafeMutablePointer<Double>,
+    ldvs: Int
+) -> Int {
+    if sort == .selected && select == nil { return -4 }
+    let select = select ?? _accelerateDgeesSelectNone
+    return _accelerateRealGees(
+        layout: layout, jobVS: jobVS, sort: sort, n: n, a: a, lda: lda,
+        sdim: sdim, wr: wr, wi: wi, vs: vs, ldvs: ldvs
+    ) {
+        dgees_(
+            $0, $1, select, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13)
+    }
+}
+
+private func _accelerateComplexGees<Scalar: _LAPACKWorkspaceScalar>(
+    layout: LAPACK.Layout,
+    jobVS: LAPACK.Eigenvectors,
+    sort: LAPACK.SchurSort,
+    n: Int,
+    a: UnsafeMutablePointer<Scalar>,
+    lda: Int,
+    sdim: UnsafeMutablePointer<Int>,
+    w: UnsafeMutablePointer<Scalar>,
+    vs: UnsafeMutablePointer<Scalar>,
+    ldvs: Int,
+    _ call: (
+        UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>,
+        UnsafeMutablePointer<Scalar>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Scalar.Magnitude>,
+        UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>
+    ) -> Void
+) -> Int {
+    if let error = _accelerateGeesArgumentError(
+        layout: layout, jobVS: jobVS, n: n, lda: lda, ldvs: ldvs,
+        ldvsArgument: 11
+    ) {
+        return error
+    }
+
+    let vsColumns = jobVS == .vectors ? n : 0
+    return _withLAPACKColumnMajorMutableMatrix(
+        layout: layout, rows: n, columns: n, matrix: a,
+        leadingDimension: lda
+    ) { a, lda in
+        _withLAPACKColumnMajorOutputMatrix(
+            layout: layout, rows: n, columns: vsColumns, matrix: vs,
+            leadingDimension: ldvs, initialValue: Scalar.zero
+        ) { vs, ldvs in
+            var jobVS = jobVS._character
+            var sort = sort._character
+            var n = n
+            var lda = lda
+            var ldvs = ldvs
+            var lwork = -1
+            var info = 0
+            var query = Scalar.zero
+            var rwork = [Scalar.Magnitude](
+                repeating: .zero, count: Swift.max(1, n)
+            )
+            var bwork = [Int](repeating: 0, count: Swift.max(1, n))
+            rwork.withUnsafeMutableBufferPointer { rwork in
+                bwork.withUnsafeMutableBufferPointer { bwork in
+                    withUnsafeMutablePointer(to: &query) { query in
+                        call(
+                            &jobVS, &sort, &n, a, &lda, sdim, w, vs,
+                            &ldvs, query, &lwork, rwork.baseAddress!,
+                            bwork.baseAddress!, &info)
+                    }
+                }
+            }
+            if info != 0 { return _lapackeInfo(info) }
+            lwork = _accelerateWorkspaceCount(query)
+            var work = [Scalar](repeating: .zero, count: lwork)
+            work.withUnsafeMutableBufferPointer { work in
+                rwork.withUnsafeMutableBufferPointer { rwork in
+                    bwork.withUnsafeMutableBufferPointer { bwork in
+                        call(
+                            &jobVS, &sort, &n, a, &lda, sdim, w, vs,
+                            &ldvs, work.baseAddress!, &lwork,
+                            rwork.baseAddress!, bwork.baseAddress!, &info)
+                    }
+                }
+            }
+            return _lapackeInfo(info)
+        }
+    }
+}
+
+internal func _accelerateCgees(
+    layout: LAPACK.Layout, jobVS: LAPACK.Eigenvectors,
+    sort: LAPACK.SchurSort, select: LAPACK.CgeesSelect?, n: Int,
+    a: UnsafeMutablePointer<Complex<Float>>, lda: Int,
+    sdim: UnsafeMutablePointer<Int>, w: UnsafeMutablePointer<Complex<Float>>,
+    vs: UnsafeMutablePointer<Complex<Float>>, ldvs: Int
+) -> Int {
+    if sort == .selected && select == nil { return -4 }
+    let select = select ?? _accelerateCgeesSelectNone
+    return _accelerateComplexGees(
+        layout: layout, jobVS: jobVS, sort: sort, n: n, a: a, lda: lda,
+        sdim: sdim, w: w, vs: vs, ldvs: ldvs
+    ) {
+        cgees_(
+            $0, $1, select, $2, _complexFloatPointer($3), $4, $5,
+            _complexFloatPointer($6), _complexFloatPointer($7), $8,
+            _complexFloatPointer($9), $10, $11, $12, $13)
+    }
+}
+
+internal func _accelerateZgees(
+    layout: LAPACK.Layout, jobVS: LAPACK.Eigenvectors,
+    sort: LAPACK.SchurSort, select: LAPACK.ZgeesSelect?, n: Int,
+    a: UnsafeMutablePointer<Complex<Double>>, lda: Int,
+    sdim: UnsafeMutablePointer<Int>, w: UnsafeMutablePointer<Complex<Double>>,
+    vs: UnsafeMutablePointer<Complex<Double>>, ldvs: Int
+) -> Int {
+    if sort == .selected && select == nil { return -4 }
+    let select = select ?? _accelerateZgeesSelectNone
+    return _accelerateComplexGees(
+        layout: layout, jobVS: jobVS, sort: sort, n: n, a: a, lda: lda,
+        sdim: sdim, w: w, vs: vs, ldvs: ldvs
+    ) {
+        zgees_(
+            $0, $1, select, $2, _complexDoublePointer($3), $4, $5,
+            _complexDoublePointer($6), _complexDoublePointer($7), $8,
+            _complexDoublePointer($9), $10, $11, $12, $13)
+    }
+}
+
 // MARK: Singular value decomposition
 
 @inline(__always)

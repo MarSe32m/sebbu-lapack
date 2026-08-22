@@ -479,6 +479,182 @@ extension LAPACK {
     }
 }
 
+// MARK: - General Schur decomposition
+
+extension LAPACK {
+    /// Computes the real Schur form and, optionally, the Schur vectors of a
+    /// real single-precision general matrix.
+    ///
+    /// When `sort` is `.selected`, `select` is called with pointers to the
+    /// real and imaginary parts of each eigenvalue. A nonzero result selects
+    /// the eigenvalue. Selecting either member of a complex conjugate pair
+    /// selects both members. On success, `sdim` is the number of selected
+    /// eigenvalues. `a` is overwritten by the upper quasi-triangular Schur
+    /// form and, when requested, `vs` contains the orthogonal Schur vectors.
+    @discardableResult
+    public static func sgees(
+        layout: Layout, jobVS: Eigenvectors, sort: SchurSort,
+        select: SgeesSelect? = nil, n: Int,
+        a: UnsafeMutablePointer<Float>, lda: Int,
+        sdim: UnsafeMutablePointer<Int>,
+        wr: UnsafeMutablePointer<Float>, wi: UnsafeMutablePointer<Float>,
+        vs: UnsafeMutablePointer<Float>, ldvs: Int
+    ) -> Int {
+        if sort == .selected && select == nil { return -4 }
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        var backendSDim: Int32 = 0
+        let info = LAPACKE_sgees(
+            _backendIndex(layout.rawValue), jobVS._character, sort._character, select,
+            _backendIndex(n), a, _backendIndex(lda), &backendSDim, wr, wi,
+            vs, _backendIndex(ldvs)
+        )
+        sdim.pointee = Int(backendSDim)
+        return Int(info)
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateSgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, wr: wr, wi: wi,
+            vs: vs, ldvs: ldvs
+        )
+        #else
+        return _lapackSgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, wr: wr, wi: wi,
+            vs: vs, ldvs: ldvs
+        )
+        #endif
+    }
+
+    /// Computes the real Schur form and, optionally, the Schur vectors of a
+    /// real double-precision general matrix.
+    ///
+    /// When `sort` is `.selected`, `select` is called with pointers to the
+    /// real and imaginary parts of each eigenvalue. A nonzero result selects
+    /// the eigenvalue. Selecting either member of a complex conjugate pair
+    /// selects both members. On success, `sdim` is the number of selected
+    /// eigenvalues. `a` is overwritten by the upper quasi-triangular Schur
+    /// form and, when requested, `vs` contains the orthogonal Schur vectors.
+    @discardableResult
+    public static func dgees(
+        layout: Layout, jobVS: Eigenvectors, sort: SchurSort,
+        select: DgeesSelect? = nil, n: Int,
+        a: UnsafeMutablePointer<Double>, lda: Int,
+        sdim: UnsafeMutablePointer<Int>,
+        wr: UnsafeMutablePointer<Double>, wi: UnsafeMutablePointer<Double>,
+        vs: UnsafeMutablePointer<Double>, ldvs: Int
+    ) -> Int {
+        if sort == .selected && select == nil { return -4 }
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        var backendSDim: Int32 = 0
+        let info = LAPACKE_dgees(
+            _backendIndex(layout.rawValue), jobVS._character, sort._character, select,
+            _backendIndex(n), a, _backendIndex(lda), &backendSDim, wr, wi,
+            vs, _backendIndex(ldvs)
+        )
+        sdim.pointee = Int(backendSDim)
+        return Int(info)
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateDgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, wr: wr, wi: wi,
+            vs: vs, ldvs: ldvs
+        )
+        #else
+        return _lapackDgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, wr: wr, wi: wi,
+            vs: vs, ldvs: ldvs
+        )
+        #endif
+    }
+
+    /// Computes the complex Schur form and, optionally, the Schur vectors of
+    /// a complex single-precision general matrix.
+    ///
+    /// The selection function receives a raw pointer to one `Complex<Float>`
+    /// value. When sorting is disabled, it is not referenced. On success,
+    /// `sdim` is the number of selected eigenvalues, `a` contains the upper
+    /// triangular Schur form, and `vs` contains the requested unitary Schur
+    /// vectors.
+    @discardableResult
+    public static func cgees(
+        layout: Layout, jobVS: Eigenvectors, sort: SchurSort,
+        select: CgeesSelect? = nil, n: Int,
+        a: UnsafeMutablePointer<Complex<Float>>, lda: Int,
+        sdim: UnsafeMutablePointer<Int>,
+        w: UnsafeMutablePointer<Complex<Float>>,
+        vs: UnsafeMutablePointer<Complex<Float>>, ldvs: Int
+    ) -> Int {
+        if sort == .selected && select == nil { return -4 }
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        let backendSelect: LAPACK_C_SELECT1? = select.map {
+            unsafeBitCast($0, to: LAPACK_C_SELECT1.self)
+        }
+        var backendSDim: Int32 = 0
+        let info = LAPACKE_cgees(
+            _backendIndex(layout.rawValue), jobVS._character, sort._character, backendSelect,
+            _backendIndex(n), _complexFloatPointer(a), _backendIndex(lda), &backendSDim,
+            _complexFloatPointer(w), _complexFloatPointer(vs), _backendIndex(ldvs)
+        )
+        sdim.pointee = Int(backendSDim)
+        return Int(info)
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateCgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, w: w, vs: vs, ldvs: ldvs
+        )
+        #else
+        return _lapackCgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, w: w, vs: vs, ldvs: ldvs
+        )
+        #endif
+    }
+
+    /// Computes the complex Schur form and, optionally, the Schur vectors of
+    /// a complex double-precision general matrix.
+    ///
+    /// The selection function receives a raw pointer to one `Complex<Double>`
+    /// value. When sorting is disabled, it is not referenced. On success,
+    /// `sdim` is the number of selected eigenvalues, `a` contains the upper
+    /// triangular Schur form, and `vs` contains the requested unitary Schur
+    /// vectors.
+    @discardableResult
+    public static func zgees(
+        layout: Layout, jobVS: Eigenvectors, sort: SchurSort,
+        select: ZgeesSelect? = nil, n: Int,
+        a: UnsafeMutablePointer<Complex<Double>>, lda: Int,
+        sdim: UnsafeMutablePointer<Int>,
+        w: UnsafeMutablePointer<Complex<Double>>,
+        vs: UnsafeMutablePointer<Complex<Double>>, ldvs: Int
+    ) -> Int {
+        if sort == .selected && select == nil { return -4 }
+        #if canImport(COpenBLAS) && !SEBBU_LAPACK_FORCE_SWIFT
+        let backendSelect: LAPACK_Z_SELECT1? = select.map {
+            unsafeBitCast($0, to: LAPACK_Z_SELECT1.self)
+        }
+        var backendSDim: Int32 = 0
+        let info = LAPACKE_zgees(
+            _backendIndex(layout.rawValue), jobVS._character, sort._character, backendSelect,
+            _backendIndex(n), _complexDoublePointer(a), _backendIndex(lda), &backendSDim,
+            _complexDoublePointer(w), _complexDoublePointer(vs), _backendIndex(ldvs)
+        )
+        sdim.pointee = Int(backendSDim)
+        return Int(info)
+        #elseif canImport(Accelerate) && !SEBBU_LAPACK_FORCE_SWIFT
+        return _accelerateZgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, w: w, vs: vs, ldvs: ldvs
+        )
+        #else
+        return _lapackZgees(
+            layout: layout, jobVS: jobVS, sort: sort, select: select,
+            n: n, a: a, lda: lda, sdim: sdim, w: w, vs: vs, ldvs: ldvs
+        )
+        #endif
+    }
+}
+
 // MARK: - Singular value decomposition
 
 extension LAPACK {

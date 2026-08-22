@@ -32,6 +32,68 @@ extension LAPACK {
         case vectors
     }
 
+    /// Whether a Schur decomposition orders selected eigenvalues first.
+    @frozen
+    public enum SchurSort: Sendable {
+        /// Preserve the order produced by the Schur iteration.
+        case none
+        /// Move eigenvalues accepted by the selection function to the
+        /// leading diagonal blocks of the Schur form.
+        case selected
+    }
+
+    #if canImport(Accelerate)
+    /// Selection function used by `sgees` on Apple platforms.
+    ///
+    /// Accelerate exposes mutable pointers for its Fortran callback ABI; the
+    /// pointed-to eigenvalue components must be treated as read-only.
+    public typealias SgeesSelect = @convention(c) (
+        UnsafeMutablePointer<Float>?, UnsafeMutablePointer<Float>?
+    ) -> Int
+
+    /// Selection function used by `dgees` on Apple platforms.
+    ///
+    /// Accelerate exposes mutable pointers for its Fortran callback ABI; the
+    /// pointed-to eigenvalue components must be treated as read-only.
+    public typealias DgeesSelect = @convention(c) (
+        UnsafeMutablePointer<Double>?, UnsafeMutablePointer<Double>?
+    ) -> Int
+
+    /// Selection function used by `cgees` on Apple platforms.
+    ///
+    /// The pointer addresses one `Complex<Float>` value. It is raw because
+    /// Accelerate's C complex type is opaque to Swift.
+    public typealias CgeesSelect = @convention(c) (OpaquePointer?) -> Int
+
+    /// Selection function used by `zgees` on Apple platforms.
+    ///
+    /// The pointer addresses one `Complex<Double>` value. It is raw because
+    /// Accelerate's C complex type is opaque to Swift.
+    public typealias ZgeesSelect = @convention(c) (OpaquePointer?) -> Int
+    #else
+    /// Selection function used by `sgees`.
+    public typealias SgeesSelect = @convention(c) (
+        UnsafePointer<Float>?, UnsafePointer<Float>?
+    ) -> Int32
+
+    /// Selection function used by `dgees`.
+    public typealias DgeesSelect = @convention(c) (
+        UnsafePointer<Double>?, UnsafePointer<Double>?
+    ) -> Int32
+
+    /// Selection function used by `cgees`.
+    ///
+    /// The pointer addresses one `Complex<Float>` value. It is raw because
+    /// LAPACKE's C complex type is opaque to Swift.
+    public typealias CgeesSelect = @convention(c) (UnsafeRawPointer?) -> Int32
+
+    /// Selection function used by `zgees`.
+    ///
+    /// The pointer addresses one `Complex<Double>` value. It is raw because
+    /// LAPACKE's C complex type is opaque to Swift.
+    public typealias ZgeesSelect = @convention(c) (UnsafeRawPointer?) -> Int32
+    #endif
+
     /// The singular vectors returned by an SVD routine.
     @frozen
     public enum SingularVectors: Sendable {
@@ -73,6 +135,16 @@ extension LAPACK.Eigenvectors {
         switch self {
         case .none: 78  // N
         case .vectors: 86  // V
+        }
+    }
+}
+
+extension LAPACK.SchurSort {
+    @usableFromInline
+    internal var _character: CChar {
+        switch self {
+        case .none: 78  // N
+        case .selected: 83  // S
         }
     }
 }
